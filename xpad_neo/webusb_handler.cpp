@@ -4,6 +4,7 @@
 #include "adc_keys.h"
 #include "mx_keys.h"
 #include "config.h"
+#include <Arduino.h>
 #include <Adafruit_TinyUSB.h>
 #include <string.h>
 
@@ -28,6 +29,7 @@ static Adafruit_USBD_Vendor s_vendor;
 // Command codes — must match the values expected by the XTIA web UI.
 // ---------------------------------------------------------------------------
 #define CMD_READ_STATUS       0x01
+#define CMD_GET_VERSION       0x02   // [] → [0x02, 0x00, major, minor, patch]
 #define CMD_CAPTURE_ACTIVE    0x12
 #define CMD_WRITE_PARAMS      0x20
 #define CMD_WRITE_KEYMAP      0x30
@@ -35,11 +37,11 @@ static Adafruit_USBD_Vendor s_vendor;
 #define CMD_READ_LAYOUT       0x32
 #define CMD_READ_KEYS         0x33
 #define CMD_READ_INPUT        0x34
+#define CMD_WRITE_MACRO       0x35   // gpio, len, text[len] → ACK [0x35, 0x00]
+#define CMD_READ_MACRO        0x36   // slot → [0x36, 0x00, gpio, len, text[len]]
+#define CMD_WRITE_ENC         0x37   // (type,code,mod) × ccw,cw,sw → ACK
+#define CMD_READ_ENC          0x38   // [] → [0x38, 0x00, (type,code,mod) × ccw,cw,sw]
 // Reserved for future modules — define new commands here:
-// #define CMD_WRITE_MACRO    0x35  (FEATURE_MACRO)
-// #define CMD_READ_MACRO     0x36  (FEATURE_MACRO)
-// #define CMD_WRITE_ENC      0x37  (FEATURE_ENCODER)
-// #define CMD_READ_ENC       0x38  (FEATURE_ENCODER)
 // #define CMD_RUMBLE_TEST    0x39  (FEATURE_RUMBLE)
 // #define CMD_READ_AUDIO     0x40  (FEATURE_MIC)
 
@@ -56,8 +58,15 @@ static uint16_t get_u16le(const uint8_t* buf) {
 }
 
 static void send(const uint8_t* data, size_t len) {
-    s_vendor.write(data, len);
-    s_vendor.flush();
+    // Responses can exceed one 64-byte USB packet (READ_LAYOUT is 84 bytes),
+    // so loop until the whole buffer has been handed to the TX FIFO.
+    size_t written = 0;
+    while (written < len) {
+        size_t n = s_vendor.write(data + written, len - written);
+        s_vendor.flush();
+        written += n;
+        if (n == 0) break; // host stopped reading — give up rather than spin
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -97,6 +106,19 @@ static void handle_read_status(const uint8_t* /*buf*/, uint8_t /*len*/) {
     put_u16le(resp + o, cfg->rt_sensitivity); o += 2;
 
     send(resp, o);
+}
+
+// ---------------------------------------------------------------------------
+// Handler: CMD_GET_VERSION (0x02)
+// Report the firmware version so the web UI can gate features by protocol
+// level (e.g. 8-row layouts require >= 1.2).
+//
+// Response: [0x02, 0x00, major, minor, patch]
+// ---------------------------------------------------------------------------
+static void handle_get_version(const uint8_t* /*buf*/, uint8_t /*len*/) {
+    uint8_t resp[5] = { CMD_GET_VERSION, 0x00,
+                        XPAD_FW_VER_MAJOR, XPAD_FW_VER_MINOR, XPAD_FW_VER_PATCH };
+    send(resp, 5);
 }
 
 // ---------------------------------------------------------------------------
@@ -158,7 +180,9 @@ static void handle_write_params(const uint8_t* buf, uint8_t len) {
 //
 // Packet: [0x30, count, gpio, hid, mod, gpio, hid, mod, ...]
 //   Each entry is 3 bytes: GPIO pin, HID keycode, modifier byte.
-//   The handler finds the matching key in keys[] by GPIO pin and updates it.
+//   Updates an existing keys[] entry whose gpio_pin matches, or creates a new
+//   one in the first free slot — CMD_WRITE_LAYOUT clears keys[] first, so a
+//   full layout write from the web UI always lands in fresh slots.
 // ---------------------------------------------------------------------------
 static void handle_write_keymap(const uint8_t* buf, uint8_t len) {
     if (len < 2) return;
@@ -172,17 +196,40 @@ static void handle_write_keymap(const uint8_t* buf, uint8_t len) {
         uint8_t hid  = buf[3 + e * 3];
         uint8_t mod  = buf[4 + e * 3];
 
+        // Whitelist: only physical key pins may enter keys[] — GPIO 0-7 (MX)
+        // and 26-29 (ADC). Anything else (virtual layout slots >= 0xC1,
+        // reserved peripheral pins) must never be scanned as a key.
+        if (gpio > 7 && !(gpio >= 26 && gpio <= 29)) continue;
+
         // Find the key entry for this GPIO pin and update it.
+        bool found = false;
         for (int i = 0; i < MAX_KEYS; i++) {
-            if (cfg->keys[i].gpio_pin == gpio && cfg->keys[i].type != KEY_TYPE_NONE) {
+            if (cfg->keys[i].type != KEY_TYPE_NONE && cfg->keys[i].gpio_pin == gpio) {
                 cfg->keys[i].hid_keycode = hid;
                 cfg->keys[i].modifiers   = mod;
+                found = true;
                 break;
+            }
+        }
+
+        // No existing entry — create a new key in the first free slot.
+        // GPIO 26-29 are the RP2040 ADC channels; all others are digital MX.
+        if (!found) {
+            for (int i = 0; i < MAX_KEYS; i++) {
+                if (cfg->keys[i].type == KEY_TYPE_NONE) {
+                    cfg->keys[i].gpio_pin    = gpio;
+                    cfg->keys[i].hid_keycode = hid;
+                    cfg->keys[i].modifiers   = mod;
+                    cfg->keys[i].type        = (gpio >= 26 && gpio <= 29)
+                                               ? KEY_TYPE_ADC : KEY_TYPE_MX;
+                    break;
+                }
             }
         }
     }
 
     config_save();
+    mx_keys_reinit();  // rebuild the GPIO scan list so new keys work immediately
 
     uint8_t resp[2] = { CMD_WRITE_KEYMAP, 0x00 };
     send(resp, 2);
@@ -191,32 +238,36 @@ static void handle_write_keymap(const uint8_t* buf, uint8_t len) {
 // ---------------------------------------------------------------------------
 // Handler: CMD_WRITE_LAYOUT (0x31)
 // Save the visual matrix layout (rows, cols, cell→gpio mapping) to flash.
-// This is what the web UI's "Write Layout" button sends.
+// This is what the web UI's "Write Layout" button sends — always the full
+// fixed-size matrix: 3 + 8×10 = 83 bytes (spans two 64-byte USB packets; the
+// dispatcher accumulates them before calling this handler).
 //
-// Packet: [0x31, rows, cols, matrix[rows][cols] ...]
+// Clears all key mappings and macros before writing the new layout, so stale
+// entries from a previous layout can never bleed through. The web UI sends
+// WRITE_KEYMAP and WRITE_MACRO right after to repopulate them.
+// ADC calibration fields are preserved unchanged.
+//
+// Packet: [0x31, rows, cols, matrix[LAYOUT_MAX_ROWS][LAYOUT_MAX_COLS]]
 //   matrix cells contain gpio_pin values; 0xFF = empty cell
 // ---------------------------------------------------------------------------
 static void handle_write_layout(const uint8_t* buf, uint8_t len) {
-    if (len < 3) return;
+    const uint8_t matrix_bytes = LAYOUT_MAX_ROWS * LAYOUT_MAX_COLS;
+    if (len < (uint8_t)(3 + matrix_bytes)) return;
+
+    uint8_t rows = buf[1];
+    uint8_t cols = buf[2];
+    if (rows > LAYOUT_MAX_ROWS || cols > LAYOUT_MAX_COLS) return;
+
     XpadConfig* cfg = config_get();
 
-    cfg->layout_rows = buf[1];
-    cfg->layout_cols = buf[2];
+    // Blank slate for the WRITE_KEYMAP / WRITE_MACRO commands that follow.
+    memset(cfg->keys, 0, sizeof(cfg->keys));
+    memset(cfg->macro_gpio, 0xFF, sizeof(cfg->macro_gpio));
+    memset(cfg->macro_text, 0, sizeof(cfg->macro_text));
 
-    uint8_t rows = cfg->layout_rows;
-    uint8_t cols = cfg->layout_cols;
-    if (rows > LAYOUT_MAX_ROWS) rows = LAYOUT_MAX_ROWS;
-    if (cols > LAYOUT_MAX_COLS) cols = LAYOUT_MAX_COLS;
-
-    size_t expected = 3 + rows * cols;
-    if (len < expected) return;
-
-    memset(cfg->layout_matrix, 0xFF, sizeof(cfg->layout_matrix));
-    for (int r = 0; r < rows; r++) {
-        for (int c = 0; c < cols; c++) {
-            cfg->layout_matrix[r][c] = buf[3 + r * cols + c];
-        }
-    }
+    cfg->layout_rows = rows;
+    cfg->layout_cols = cols;
+    memcpy(cfg->layout_matrix, buf + 3, matrix_bytes);
 
     config_save();
 
@@ -226,26 +277,20 @@ static void handle_write_layout(const uint8_t* buf, uint8_t len) {
 
 // ---------------------------------------------------------------------------
 // Handler: CMD_READ_LAYOUT (0x32)
-// Return the stored visual matrix layout.
+// Return the stored visual matrix layout — always the full fixed-size matrix,
+// 4 + 80 = 84 bytes (64-byte packet + 20-byte short packet on the wire).
 //
-// Response: [0x32, 0x00, rows, cols, matrix[rows][cols]]
+// Response: [0x32, 0x00, rows, cols, matrix[LAYOUT_MAX_ROWS][LAYOUT_MAX_COLS]]
 // ---------------------------------------------------------------------------
 static void handle_read_layout(const uint8_t* /*buf*/, uint8_t /*len*/) {
     const XpadConfig* cfg = config_get();
-    uint8_t resp[3 + LAYOUT_MAX_ROWS * LAYOUT_MAX_COLS];
+    uint8_t resp[4 + LAYOUT_MAX_ROWS * LAYOUT_MAX_COLS] = {};
     resp[0] = CMD_READ_LAYOUT;
     resp[1] = 0x00;
     resp[2] = cfg->layout_rows;
     resp[3] = cfg->layout_cols;
-
-    uint8_t rows = cfg->layout_rows;
-    uint8_t cols = cfg->layout_cols;
-    for (int r = 0; r < rows; r++) {
-        for (int c = 0; c < cols; c++) {
-            resp[4 + r * cols + c] = cfg->layout_matrix[r][c];
-        }
-    }
-    send(resp, 4 + rows * cols);
+    memcpy(resp + 4, cfg->layout_matrix, LAYOUT_MAX_ROWS * LAYOUT_MAX_COLS);
+    send(resp, sizeof(resp));
 }
 
 // ---------------------------------------------------------------------------
@@ -280,9 +325,12 @@ static void handle_read_keys(const uint8_t* /*buf*/, uint8_t /*len*/) {
 // the travel percentage of each ADC channel.
 // Used by the web UI's live key-test mode.
 //
-// Response: [0x34, 0x00, gpio_lo, gpio_mid, gpio_hi, gpio_top, adc0%, adc1%, adc2%, adc3%]
+// Response (13 bytes, matches XPAD firmware 1.2):
+//   [0x34, 0x00, gpio_pressed u32LE, adc0-3 travel %, enc_cw, enc_ccw, enc_sw]
 //   gpio bytes: 32-bit bitmask of pressed MX GPIO pins, little-endian
 //   adc%: travel percentage (0-100) per channel
+//   enc_*: rotation ticks since last poll / button state — always 0 unless
+//          FEATURE_ENCODER is enabled (no encoder on base XPAD-NEO hardware)
 // ---------------------------------------------------------------------------
 static void handle_read_input(const uint8_t* /*buf*/, uint8_t /*len*/) {
     uint32_t gpio_mask = 0;
@@ -296,7 +344,7 @@ static void handle_read_input(const uint8_t* /*buf*/, uint8_t /*len*/) {
         }
     }
 
-    uint8_t resp[10];
+    uint8_t resp[13] = {};
     resp[0] = CMD_READ_INPUT;
     resp[1] = 0x00;
     resp[2] = (uint8_t)(gpio_mask & 0xFF);
@@ -307,7 +355,124 @@ static void handle_read_input(const uint8_t* /*buf*/, uint8_t /*len*/) {
     resp[7] = g_adc_pct[1];
     resp[8] = g_adc_pct[2];
     resp[9] = g_adc_pct[3];
-    send(resp, 10);
+    resp[10] = 0;  // enc_cw  — reserved for FEATURE_ENCODER
+    resp[11] = 0;  // enc_ccw — reserved for FEATURE_ENCODER
+    resp[12] = 0;  // enc_sw  — reserved for FEATURE_ENCODER
+    send(resp, 13);
+}
+
+// ---------------------------------------------------------------------------
+// Handler: CMD_WRITE_MACRO (0x35)
+// Store macro text for one GPIO. Finds the existing slot for that GPIO or
+// claims a free one; len = 0 clears the slot. The macro fields are always
+// stored so the web UI round-trips them — playback itself requires
+// FEATURE_MACRO.
+//
+// Packet: [0x35, gpio, len, char0..charN]
+// Response: [0x35, 0x00] on success, [0x35, 0x01] when no free slot
+// ---------------------------------------------------------------------------
+static void handle_write_macro(const uint8_t* buf, uint8_t len) {
+    if (len < 3) return;
+    uint8_t gpio     = buf[1];
+    uint8_t text_len = buf[2];
+    // Reserve one byte for the NUL terminator.
+    if (text_len >= MACRO_TEXT_LEN) text_len = MACRO_TEXT_LEN - 1;
+    if (len < (uint8_t)(3 + text_len)) return;
+
+    XpadConfig* cfg = config_get();
+
+    // Find the existing slot for this GPIO, or a free slot.
+    int slot = -1;
+    for (int i = 0; i < MACRO_KEYS_MAX; i++) {
+        if (cfg->macro_gpio[i] == gpio) { slot = i; break; }
+    }
+    if (slot == -1 && text_len > 0) {
+        for (int i = 0; i < MACRO_KEYS_MAX; i++) {
+            if (cfg->macro_gpio[i] == 0xFF) { slot = i; break; }
+        }
+    }
+    if (slot == -1) {
+        uint8_t resp[2] = { CMD_WRITE_MACRO, 0x01 }; // no free slot
+        send(resp, 2);
+        return;
+    }
+
+    if (text_len == 0) {
+        cfg->macro_gpio[slot] = 0xFF;
+        cfg->macro_text[slot][0] = '\0';
+    } else {
+        cfg->macro_gpio[slot] = gpio;
+        memcpy(cfg->macro_text[slot], buf + 3, text_len);
+        cfg->macro_text[slot][text_len] = '\0';
+    }
+    config_save();
+
+    uint8_t resp[2] = { CMD_WRITE_MACRO, 0x00 };
+    send(resp, 2);
+}
+
+// ---------------------------------------------------------------------------
+// Handler: CMD_READ_MACRO (0x36)
+// Return one macro slot's GPIO and text.
+//
+// Packet: [0x36, slot]
+// Response: [0x36, 0x00, gpio, len, char0..charN]  (gpio = 0xFF if empty)
+// ---------------------------------------------------------------------------
+static void handle_read_macro(const uint8_t* buf, uint8_t len) {
+    if (len < 2) return;
+    uint8_t slot = buf[1];
+    if (slot >= MACRO_KEYS_MAX) return;
+
+    const XpadConfig* cfg = config_get();
+    uint8_t text_len = (uint8_t)strnlen(cfg->macro_text[slot], MACRO_TEXT_LEN);
+
+    uint8_t resp[4 + MACRO_TEXT_LEN] = {};
+    resp[0] = CMD_READ_MACRO;
+    resp[1] = 0x00;
+    resp[2] = cfg->macro_gpio[slot];   // 0xFF if empty
+    resp[3] = text_len;
+    if (text_len > 0) memcpy(resp + 4, cfg->macro_text[slot], text_len);
+    send(resp, 4 + text_len);
+}
+
+// ---------------------------------------------------------------------------
+// Handler: CMD_WRITE_ENC (0x37)
+// Store the rotary-encoder sub-action mappings. Always stored so the web UI
+// round-trips them — the encoder itself runs only with FEATURE_ENCODER.
+//
+// Packet: [0x37, ccw_type, ccw_code, ccw_mod,
+//                cw_type,  cw_code,  cw_mod,
+//                sw_type,  sw_code,  sw_mod]
+// Response: [0x37, 0x00]
+// ---------------------------------------------------------------------------
+static void handle_write_enc(const uint8_t* buf, uint8_t len) {
+    if (len < 10) return;
+    XpadConfig* cfg = config_get();
+
+    cfg->enc_ccw_type = buf[1]; cfg->enc_ccw_code = buf[2]; cfg->enc_ccw_mod = buf[3];
+    cfg->enc_cw_type  = buf[4]; cfg->enc_cw_code  = buf[5]; cfg->enc_cw_mod  = buf[6];
+    cfg->enc_sw_type  = buf[7]; cfg->enc_sw_code  = buf[8]; cfg->enc_sw_mod  = buf[9];
+    config_save();
+
+    uint8_t resp[2] = { CMD_WRITE_ENC, 0x00 };
+    send(resp, 2);
+}
+
+// ---------------------------------------------------------------------------
+// Handler: CMD_READ_ENC (0x38)
+// Return the stored rotary-encoder sub-action mappings.
+//
+// Response: [0x38, 0x00, (type, code, mod) × ccw, cw, sw]
+// ---------------------------------------------------------------------------
+static void handle_read_enc(const uint8_t* /*buf*/, uint8_t /*len*/) {
+    const XpadConfig* cfg = config_get();
+    uint8_t resp[11];
+    resp[0] = CMD_READ_ENC;
+    resp[1] = 0x00;
+    resp[2] = cfg->enc_ccw_type; resp[3] = cfg->enc_ccw_code; resp[4]  = cfg->enc_ccw_mod;
+    resp[5] = cfg->enc_cw_type;  resp[6] = cfg->enc_cw_code;  resp[7]  = cfg->enc_cw_mod;
+    resp[8] = cfg->enc_sw_type;  resp[9] = cfg->enc_sw_code;  resp[10] = cfg->enc_sw_mod;
+    send(resp, 11);
 }
 
 // ---------------------------------------------------------------------------
@@ -323,6 +488,7 @@ struct HandlerEntry {
 
 static const HandlerEntry kHandlers[] = {
     { CMD_READ_STATUS,    handle_read_status    },
+    { CMD_GET_VERSION,    handle_get_version    },
     { CMD_CAPTURE_ACTIVE, handle_capture_active },
     { CMD_WRITE_PARAMS,   handle_write_params   },
     { CMD_WRITE_KEYMAP,   handle_write_keymap   },
@@ -330,6 +496,10 @@ static const HandlerEntry kHandlers[] = {
     { CMD_READ_LAYOUT,    handle_read_layout    },
     { CMD_READ_KEYS,      handle_read_keys      },
     { CMD_READ_INPUT,     handle_read_input     },
+    { CMD_WRITE_MACRO,    handle_write_macro    },
+    { CMD_READ_MACRO,     handle_read_macro     },
+    { CMD_WRITE_ENC,      handle_write_enc      },
+    { CMD_READ_ENC,       handle_read_enc       },
     // Add new handlers here — one line per command.
 };
 
@@ -342,18 +512,36 @@ void webusb_handler_setup() {
 
 // ---------------------------------------------------------------------------
 void webusb_handler_task() {
+    // WRITE_LAYOUT (3 + 8×10 = 83 bytes) is the only host→device command
+    // longer than one 64-byte USB packet, so it can arrive split across two
+    // FIFO reads. Accumulate until the full command is in; every other
+    // command fits one packet and dispatches immediately.
+    static uint8_t  buf[128];
+    static uint8_t  fill = 0;
+    static uint32_t fill_start_ms = 0;
+
     if (!s_vendor.available()) return;
 
-    uint8_t buf[64];
-    int n = s_vendor.read(buf, sizeof(buf));
-    if (n <= 0) return;
+    if (fill == 0) fill_start_ms = millis();
+    int n = s_vendor.read(buf + fill, sizeof(buf) - fill);
+    if (n > 0) fill += (uint8_t)n;
+    if (fill == 0) return;
+
+    const uint8_t layout_len = 3 + LAYOUT_MAX_ROWS * LAYOUT_MAX_COLS;
+    if (buf[0] == CMD_WRITE_LAYOUT && fill < layout_len) {
+        // Drop a stale partial so a truncated packet can't wedge the parser.
+        if (millis() - fill_start_ms > 100) fill = 0;
+        return;
+    }
 
     uint8_t cmd = buf[0];
+    uint8_t len = fill;
+    fill = 0;
 
     // Walk the dispatch table — O(N) but N is tiny (< 20 commands).
     for (size_t i = 0; i < kHandlerCount; i++) {
         if (kHandlers[i].cmd == cmd) {
-            kHandlers[i].fn(buf, (uint8_t)n);
+            kHandlers[i].fn(buf, len);
             return;
         }
     }

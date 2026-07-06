@@ -10,11 +10,13 @@
 
 // -----------------------------------------------------------------------------
 // USB identifiers
-// The web configurator (index.html / adc_calibration.html) filters USB devices
-// by VID == 0xCafe. Keep this value to stay compatible with the XTIA web UI.
+// The XTIA web configurator (xtiaconfiger.com) filters USB devices by
+// VID == 0x1209 (pid.codes open-hardware VID space) — must match the XPAD
+// firmware's USB_VID in src/usb/usb_descriptors.c or the device won't show
+// up in the browser's WebUSB picker.
 // -----------------------------------------------------------------------------
-#define XPAD_USB_VID  0xCafe
-#define XPAD_USB_PID  0x4002   // 0x4001 = XPAD firmware; 0x4002 = XPAD-NEO
+#define XPAD_USB_VID  0x1209
+#define XPAD_USB_PID  0x0002   // 0x0001 = XPAD firmware; 0x0002 = XPAD-NEO
 
 // -----------------------------------------------------------------------------
 // ADC pins  (Hall-effect / analog keys)
@@ -64,5 +66,14 @@
 // Magic word written at the start of the config struct. If the stored magic
 // does not match this value, factory defaults are loaded instead.
 // Value must match XPAD firmware's CONFIG_MAGIC so both can read the same file
-// if you ever copy flash images between devices.
-#define CONFIG_MAGIC  0x58544948UL   // ASCII "XTIH"
+// if you ever copy flash images between devices. The XPAD firmware bumps this
+// whenever the struct layout changes (last bump: layout_matrix 6→8 rows,
+// mic_enabled removed) — keep in lockstep with src/storage/flash_config.cpp.
+#define CONFIG_MAGIC  0x58544949UL   // ASCII "XTII"
+
+// Firmware version reported by CMD_GET_VERSION (0x02). The major.minor pair
+// tracks the XPAD firmware's config/protocol level so the web configurator
+// enables the same feature set for both devices.
+#define XPAD_FW_VER_MAJOR  1
+#define XPAD_FW_VER_MINOR  2
+#define XPAD_FW_VER_PATCH  0

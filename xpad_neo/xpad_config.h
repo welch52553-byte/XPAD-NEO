@@ -14,7 +14,7 @@
 // =============================================================================
 
 #define MAX_KEYS          64
-#define LAYOUT_MAX_ROWS    6
+#define LAYOUT_MAX_ROWS    8   // must match XPAD firmware / web configurator
 #define LAYOUT_MAX_COLS   10
 
 // Key type stored per-key in the keys[] array.
@@ -88,9 +88,6 @@ typedef struct {
     uint8_t    enc_sw_type;
     uint8_t    enc_sw_code;
     uint8_t    enc_sw_mod;
-
-    // ── Peripheral flags ─────────────────────────────────────────────────────
-    uint8_t    mic_enabled;               // Reserved (FEATURE_MIC)
 
 } XpadConfig;
 

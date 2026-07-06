@@ -2,6 +2,7 @@
 #include "xpad_config.h"
 #include "config.h"
 #include <Arduino.h>
+#include <string.h>
 
 // =============================================================================
 // mx_keys.cpp — MX switch debounce and scanning
@@ -37,6 +38,15 @@ void mx_keys_setup() {
         // INPUT_PULLUP: pin reads HIGH at rest, LOW when switch is closed.
         pinMode(k->gpio_pin, INPUT_PULLUP);
     }
+}
+
+// ---------------------------------------------------------------------------
+void mx_keys_reinit() {
+    // Drop all debounce state and the pressed mask — slot→key assignments may
+    // have changed, so per-slot state from the old keymap is meaningless.
+    memset((void*)s_state, 0, sizeof(s_state));
+    g_mx_pressed_mask = 0;
+    mx_keys_setup();
 }
 
 // ---------------------------------------------------------------------------

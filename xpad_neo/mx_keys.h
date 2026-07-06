@@ -17,6 +17,11 @@
 // Must be called after config_load() in setup().
 void mx_keys_setup();
 
+// Re-run pin setup and reset debounce state after keys[] changed at runtime
+// (e.g. the web configurator wrote a new keymap). Mirrors the XPAD firmware's
+// gpio_keys_reinit().
+void mx_keys_reinit();
+
 // Sample all MX GPIO pins and update g_mx_pressed_mask.
 // Call this every loop iteration — debounce timing is handled internally.
 void mx_keys_scan();

@@ -61,12 +61,13 @@ composite HID + Vendor device used here.
 
 ### 4. Set USB VID/PID
 
-The XTIA web UI filters USB devices by Vendor ID `0xCafe`. You need to set
-this before uploading.
+The XTIA web UI filters USB devices by Vendor ID `0x1209` (the pid.codes
+open-hardware VID, same as the XPAD firmware). You need to set this before
+uploading.
 
 **Option A — build flags (PlatformIO / command line):**
 ```
--DUSB_VID=0xCafe -DUSB_PID=0x4002
+-DUSB_VID=0x1209 -DUSB_PID=0x0002
 ```
 
 **Option B — edit `boards.txt`:**
@@ -79,8 +80,8 @@ waveshare_rp2040_zero.build.pid=0x000a
 ```
 to:
 ```
-waveshare_rp2040_zero.build.vid=0xCafe
-waveshare_rp2040_zero.build.pid=0x4002
+waveshare_rp2040_zero.build.vid=0x1209
+waveshare_rp2040_zero.build.pid=0x0002
 ```
 
 ### 5. Upload

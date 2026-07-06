@@ -23,7 +23,8 @@
 //   1. Install arduino-pico board package in Arduino IDE.
 //   2. Select board: "Waveshare RP2040 Zero" (or your board).
 //   3. Select USB Stack: "Adafruit TinyUSB" in Tools menu.
-//   4. Set USB_VID = 0xCafe and USB_PID = 0x4002 (see README).
+//   4. USB VID/PID (0x1209/0x0002) are applied at runtime via setID() —
+//      no boards.txt edits required (see README).
 //   5. Upload. Open XTIA web UI to calibrate and configure.
 // =============================================================================
 
@@ -74,7 +75,10 @@ void setup() {
     webusb_handler_setup();
     hid_keyboard_setup();
 
-    // Provide human-readable USB device strings (visible in Device Manager).
+    // USB identity. The VID must be 0x1209 (pid.codes) — the XTIA web
+    // configurator's WebUSB device picker filters on it. Setting it here
+    // overrides whatever boards.txt provides, so no core edits are needed.
+    TinyUSBDevice.setID(XPAD_USB_VID, XPAD_USB_PID);
     TinyUSBDevice.setManufacturerDescriptor("XTIA");
     TinyUSBDevice.setProductDescriptor("XPAD-NEO");
 

@@ -58,8 +58,6 @@ static const XpadConfig k_default_config = {
     .enc_ccw_type = 0, .enc_ccw_code = 0, .enc_ccw_mod = 0,
     .enc_cw_type  = 0, .enc_cw_code  = 0, .enc_cw_mod  = 0,
     .enc_sw_type  = 0, .enc_sw_code  = 0, .enc_sw_mod  = 0,
-
-    .mic_enabled = 0,      // mic not present on base XPAD-NEO hardware
 };
 
 // ---------------------------------------------------------------------------
