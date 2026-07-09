@@ -11,6 +11,7 @@ xpad_neo/build/
 # Local agent/workspace metadata
 .agents/
 .codex/
+PROGRESS.md
 
 # OS/editor noise
 .DS_Store

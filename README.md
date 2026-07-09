@@ -6,6 +6,11 @@ It is intentionally small: one `.ino` file scans mechanical MX switches and
 sends normal USB HID keyboard reports. The project is aimed at beginner-friendly
 hardware testing and teaching, not full XPAD firmware compatibility.
 
+The firmware is designed to work without the original XPAD host tools. When no
+valid Flash layout is available, it uses the hardcoded default GPIO-to-HID
+mapping near the top of `xpad_neo.ino`. In a later task, a valid Flash layout
+can override those defaults once the layout format is known.
+
 ## Current Status
 
 | Feature | Status |
@@ -13,7 +18,7 @@ hardware testing and teaching, not full XPAD firmware compatibility.
 | MX mechanical switch scanning | Supported |
 | USB HID keyboard output | Supported |
 | Single-file Arduino sketch | Supported |
-| Default Notepad test output | `1` to `8` |
+| Default HID output | `F13` to `F20` |
 | WebUSB / Layout Generator | Deferred |
 | LittleFS config storage | Removed |
 | ADC / magnetic axis keys | Not supported |
@@ -34,25 +39,36 @@ The active firmware is only [xpad_neo.ino](xpad_neo/xpad_neo.ino).
 Generated build output under `xpad_neo/build/` is ignored and should not be
 committed.
 
-## Default Test Mapping
+## Default HID Mapping
 
-The sketch currently assumes eight active-low MX switches on GP0-GP7:
+The sketch currently assumes eight active-low MX switches on GP0-GP7. This is
+the default fallback mapping and should stay easy to find near the top of
+`xpad_neo.ino`:
 
 ```cpp
-static const MxKey MX_KEYS[] = {
-    { 0, 0x1E, 0 }, // 1
-    { 1, 0x1F, 0 }, // 2
-    { 2, 0x20, 0 }, // 3
-    { 3, 0x21, 0 }, // 4
-    { 4, 0x22, 0 }, // 5
-    { 5, 0x23, 0 }, // 6
-    { 6, 0x24, 0 }, // 7
-    { 7, 0x25, 0 }, // 8
+static const MxKey DEFAULT_MX_KEYS[] = {
+    { 0, 0x68, 0 }, // F13
+    { 1, 0x69, 0 }, // F14
+    { 2, 0x6A, 0 }, // F15
+    { 3, 0x6B, 0 }, // F16
+    { 4, 0x6C, 0 }, // F17
+    { 5, 0x6D, 0 }, // F18
+    { 6, 0x6E, 0 }, // F19
+    { 7, 0x6F, 0 }, // F20
 };
 ```
 
-Open Notepad after flashing. Pressing the eight MX keys should type `1` through
-`8` if the GPIO map matches the hardware.
+After flashing, use any tool that can observe keyboard HID events or react to
+function keys. For Small Deck testing, enable **Show all F13-F24**, bind actions
+to `F13` through `F20`, then press each MX key.
+
+Future layout loading should follow this priority:
+
+1. Use a valid Flash layout if one exists.
+2. Otherwise use the hardcoded fallback mapping above.
+
+The current firmware does not parse a real Flash layout yet because the stored
+layout format and protocol are not defined in this repository.
 
 ## Arduino IDE Setup
 
@@ -110,19 +126,24 @@ Global variables use 16972 bytes (6%) of dynamic memory.
 ## Hardware Test
 
 1. Flash the sketch from Arduino IDE.
-2. Open Notepad.
-3. Press each MX key once.
-4. Expected output is `1`, `2`, `3`, `4`, `5`, `6`, `7`, `8`.
+2. Confirm the device enumerates as a USB keyboard.
+3. Choose a test target for the current task:
+   - keyboard event viewer or OS-level hotkey tool for raw HID checks
+   - Small Deck with **Show all F13-F24** enabled for launcher checks
+   - a temporary diagnostic sketch if GPIO mapping is unknown
+4. Press each MX key once.
+5. Expected behavior: each key produces the configured HID output.
 
 If no key types anything, the most likely issue is that the real XPAD MX GPIO
 pins are not GP0-GP7. In that case, use a temporary GPIO diagnostic sketch and
-then update the `MX_KEYS` table.
+then update the `DEFAULT_MX_KEYS` table.
 
 ## Deferred Work
 
-Layout Generator compatibility is deferred until the leader provides the main
-XPAD source or protocol details. It should be added later as a deliberate task,
-not guessed into the current beginner firmware.
+Layout Generator or Flash layout compatibility is deferred until the leader
+provides the main XPAD source, protocol details, or stored layout format. It
+should be added later as a deliberate task, not guessed into the current
+beginner firmware.
 
 ## Development Rules
 

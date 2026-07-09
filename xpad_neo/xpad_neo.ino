@@ -29,26 +29,52 @@ static const uint16_t USB_PID = 0x0002;
 //   pressed  = LOW because the switch connects the pin to GND
 static const uint8_t MX_DEBOUNCE_MS = 5;
 
-// GPIO pins and default HID keycodes.
-// For easy Notepad testing, the default output is 1-8.
+// One MX switch mapping entry:
+//   gpio       = RP2040 GPIO number connected to the MX switch.
+//   hidKeycode = USB HID keyboard keycode sent when the switch is pressed.
+//   modifiers  = USB keyboard modifier bits, such as Ctrl/Shift/Alt.
 struct MxKey {
     uint8_t gpio;
     uint8_t hidKeycode;
     uint8_t modifiers;
 };
 
-static const MxKey MX_KEYS[] = {
-    { 0, 0x1E, 0 }, // 1
-    { 1, 0x1F, 0 }, // 2
-    { 2, 0x20, 0 }, // 3
-    { 3, 0x21, 0 }, // 4
-    { 4, 0x22, 0 }, // 5
-    { 5, 0x23, 0 }, // 6
-    { 6, 0x24, 0 }, // 7
-    { 7, 0x25, 0 }, // 8
+// Default fallback layout.
+//
+// This table is the firmware's built-in layout. It is intentionally placed near
+// the top of the sketch so a beginner can change the GPIO pins or HID outputs
+// without reading the rest of the code first.
+//
+// Layout selection rule:
+//   1. If a valid Flash layout is available in a future supported format, use it.
+//   2. If no valid Flash layout exists, use this hardcoded fallback layout.
+//
+// The current repository does not define the Flash layout format yet, so the
+// firmware always uses this table today. The default output is F13-F20 because
+// Small Deck can bind those keys without conflicting with normal typing.
+static const MxKey DEFAULT_MX_KEYS[] = {
+    { 0, 0x68, 0 }, // F13
+    { 1, 0x69, 0 }, // F14
+    { 2, 0x6A, 0 }, // F15
+    { 3, 0x6B, 0 }, // F16
+    { 4, 0x6C, 0 }, // F17
+    { 5, 0x6D, 0 }, // F18
+    { 6, 0x6E, 0 }, // F19
+    { 7, 0x6F, 0 }, // F20
 };
 
-static const uint8_t MX_KEY_COUNT = sizeof(MX_KEYS) / sizeof(MX_KEYS[0]);
+static const uint8_t DEFAULT_MX_KEY_COUNT =
+    sizeof(DEFAULT_MX_KEYS) / sizeof(DEFAULT_MX_KEYS[0]);
+
+// Active layout used by scanning and HID reporting. Today this points to the
+// hardcoded fallback layout. Later, Flash loading can replace these pointers
+// after validating a stored layout.
+static const MxKey* activeMxKeys = DEFAULT_MX_KEYS;
+static uint8_t activeMxKeyCount = DEFAULT_MX_KEY_COUNT;
+
+// Keep the state arrays fixed-size so the sketch stays simple and predictable
+// for Arduino beginners. A future Flash layout must fit within this capacity.
+static const uint8_t MX_KEY_CAPACITY = DEFAULT_MX_KEY_COUNT;
 
 // =============================================================================
 // USB HID keyboard setup
@@ -76,7 +102,7 @@ struct DebounceState {
     uint32_t lastChangeMs;
 };
 
-static DebounceState keyState[MX_KEY_COUNT] = {};
+static DebounceState keyState[MX_KEY_CAPACITY] = {};
 static uint32_t pressedMask = 0;
 
 // =============================================================================
@@ -84,6 +110,8 @@ static uint32_t pressedMask = 0;
 // =============================================================================
 
 static void setupUsbKeyboard();
+static void selectActiveLayout();
+static bool loadFlashLayout();
 static void setupMxPins();
 static void scanMxKeys();
 static void sendKeyboardReport();
@@ -99,6 +127,7 @@ void setup() {
     TinyUSBDevice.setProductDescriptor("XPAD-NEO");
 
     setupUsbKeyboard();
+    selectActiveLayout();
 
     while (!TinyUSBDevice.mounted()) {
         delay(1);
@@ -122,9 +151,31 @@ static void setupUsbKeyboard() {
     usbHid.begin();
 }
 
+static void selectActiveLayout() {
+    if (loadFlashLayout()) {
+        return;
+    }
+
+    activeMxKeys = DEFAULT_MX_KEYS;
+    activeMxKeyCount = DEFAULT_MX_KEY_COUNT;
+}
+
+static bool loadFlashLayout() {
+    // Placeholder for a future, explicitly defined Flash layout format.
+    //
+    // When the stored layout format is known, this function should:
+    //   1. Read the layout data from Flash.
+    //   2. Validate its magic/version/checksum/key count.
+    //   3. Reject layouts with more than MX_KEY_CAPACITY entries.
+    //   4. Point activeMxKeys/activeMxKeyCount at the validated layout.
+    //
+    // Returning false keeps the firmware on the hardcoded fallback layout.
+    return false;
+}
+
 static void setupMxPins() {
-    for (uint8_t i = 0; i < MX_KEY_COUNT; i++) {
-        pinMode(MX_KEYS[i].gpio, INPUT_PULLUP);
+    for (uint8_t i = 0; i < activeMxKeyCount; i++) {
+        pinMode(activeMxKeys[i].gpio, INPUT_PULLUP);
     }
 }
 
@@ -136,8 +187,8 @@ static void scanMxKeys() {
     const uint32_t now = millis();
     uint32_t newPressedMask = pressedMask;
 
-    for (uint8_t i = 0; i < MX_KEY_COUNT; i++) {
-        const bool rawPressed = (digitalRead(MX_KEYS[i].gpio) == LOW);
+    for (uint8_t i = 0; i < activeMxKeyCount; i++) {
+        const bool rawPressed = (digitalRead(activeMxKeys[i].gpio) == LOW);
         DebounceState& state = keyState[i];
 
         if (rawPressed != state.rawPressed) {
@@ -173,17 +224,17 @@ static void sendKeyboardReport() {
     uint8_t modifier = 0;
     uint8_t count = 0;
 
-    for (uint8_t i = 0; i < MX_KEY_COUNT && count < 6; i++) {
+    for (uint8_t i = 0; i < activeMxKeyCount && count < 6; i++) {
         if ((pressedMask & (1u << i)) == 0) {
             continue;
         }
 
-        if (MX_KEYS[i].hidKeycode == 0) {
+        if (activeMxKeys[i].hidKeycode == 0) {
             continue;
         }
 
-        modifier |= MX_KEYS[i].modifiers;
-        keycodes[count++] = MX_KEYS[i].hidKeycode;
+        modifier |= activeMxKeys[i].modifiers;
+        keycodes[count++] = activeMxKeys[i].hidKeycode;
     }
 
     if (modifier == lastModifier && sameKeys(keycodes, lastKeycodes)) {
