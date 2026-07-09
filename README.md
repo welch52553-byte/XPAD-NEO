@@ -1,166 +1,138 @@
 # XPAD-NEO
 
-Open-source Arduino firmware for the XTIA XPAD keyboard platform.
+XPAD-NEO is a single-file Arduino sketch for an MX-only XPAD mini keyboard.
 
-Designed as a learning resource for embedded vibe-coding with AI assistance.
-All source files are annotated with explanations of the underlying concepts.
+It is intentionally small: one `.ino` file scans mechanical MX switches and
+sends normal USB HID keyboard reports. The project is aimed at beginner-friendly
+hardware testing and teaching, not full XPAD firmware compatibility.
 
----
-
-## Features
+## Current Status
 
 | Feature | Status |
 |---|---|
-| MX mechanical switch scanning | ✅ Implemented |
-| ADC hall-effect key scanning | ✅ Implemented |
-| EMA noise filtering | ✅ Implemented |
-| Fixed-threshold trigger | ✅ Implemented |
-| Rapid Trigger mode | ✅ Implemented |
-| USB HID keyboard (6KRO) | ✅ Implemented |
-| WebUSB config protocol | ✅ Implemented |
-| XTIA web UI compatible | ✅ Compatible |
-| LittleFS config persistence | ✅ Implemented |
-| Rotary encoder | 🔲 FEATURE_ENCODER |
-| Text macros | 🔲 FEATURE_MACRO |
-| I2S microphone | 🔲 FEATURE_MIC |
-| Vibration motor | 🔲 FEATURE_RUMBLE |
+| MX mechanical switch scanning | Supported |
+| USB HID keyboard output | Supported |
+| Single-file Arduino sketch | Supported |
+| Default Notepad test output | `1` to `8` |
+| WebUSB / Layout Generator | Deferred |
+| LittleFS config storage | Removed |
+| ADC / magnetic axis keys | Not supported |
+| Encoder | Not supported |
+| Microphone | Not supported |
+| Vibration | Not supported |
+| Macro playback | Not supported |
 
----
+## Source Layout
 
-## Hardware
+```text
+xpad_neo/
+  xpad_neo.ino
+```
 
-- **MCU**: Waveshare RP2040 Zero (same as used in XPAD and GP2040-CE)
-- **ADC keys**: GP26, GP27, GP28, GP29 (hall-effect, 12-bit ADC)
-- **MX keys**: GP0–GP5 by default (configurable in `config.h`)
+The active firmware is only [xpad_neo.ino](xpad_neo/xpad_neo.ino).
 
----
+Generated build output under `xpad_neo/build/` is ignored and should not be
+committed.
+
+## Default Test Mapping
+
+The sketch currently assumes eight active-low MX switches on GP0-GP7:
+
+```cpp
+static const MxKey MX_KEYS[] = {
+    { 0, 0x1E, 0 }, // 1
+    { 1, 0x1F, 0 }, // 2
+    { 2, 0x20, 0 }, // 3
+    { 3, 0x21, 0 }, // 4
+    { 4, 0x22, 0 }, // 5
+    { 5, 0x23, 0 }, // 6
+    { 6, 0x24, 0 }, // 7
+    { 7, 0x25, 0 }, // 8
+};
+```
+
+Open Notepad after flashing. Pressing the eight MX keys should type `1` through
+`8` if the GPIO map matches the hardware.
 
 ## Arduino IDE Setup
 
-### 1. Install the arduino-pico board package
+1. Install Arduino IDE 2.x.
+2. Open File > Preferences.
+3. Add this Boards Manager URL:
 
-In Arduino IDE → File → Preferences → Additional Boards Manager URLs, add:
-
-```
+```text
 https://github.com/earlephilhower/arduino-pico/releases/download/global/package_rp2040_index.json
 ```
 
-Then go to Tools → Board → Boards Manager, search for **rp2040** and install
-**Raspberry Pi RP2040 Boards** by Earle F. Philhower III.
+4. Install this board package:
 
-### 2. Select your board
-
-Tools → Board → Raspberry Pi RP2040 Boards → **Waveshare RP2040 Zero**
-
-### 3. Select USB Stack
-
-Tools → USB Stack → **Adafruit TinyUSB**
-
-This is required. The default "Pico SDK" USB stack does not support the
-composite HID + Vendor device used here.
-
-### 4. Set USB VID/PID
-
-The XTIA web UI filters USB devices by Vendor ID `0x1209` (the pid.codes
-open-hardware VID, same as the XPAD firmware). You need to set this before
-uploading.
-
-**Option A — build flags (PlatformIO / command line):**
-```
--DUSB_VID=0x1209 -DUSB_PID=0x0002
+```text
+Raspberry Pi Pico/RP2040/RP2350 by Earle F. Philhower, III
 ```
 
-**Option B — edit `boards.txt`:**
-Find your arduino-pico installation (usually in
-`~/AppData/Local/Arduino15/packages/rp2040/hardware/rp2040/x.x.x/`),
-open `boards.txt`, find the `waveshare_rp2040_zero` section, and change:
-```
-waveshare_rp2040_zero.build.vid=0x2E8A
-waveshare_rp2040_zero.build.pid=0x000a
-```
-to:
-```
-waveshare_rp2040_zero.build.vid=0x1209
-waveshare_rp2040_zero.build.pid=0x0002
+5. Select the board currently being flashed. For the user's current test board:
+
+```text
+Board: Raspberry Pi Pico
+USB Stack: Adafruit TinyUSB
 ```
 
-### 5. Upload
+For Waveshare RP2040 Zero hardware, select:
 
-Hold the BOOT button on the RP2040, connect USB, release BOOT. The board
-appears as a USB drive. Click Upload in Arduino IDE.
-
----
-
-## Using the XTIA Web UI
-
-Open `http://118.31.120.202` (or your local server) in Chrome or Edge.
-
-- **Layout Generator** — assign keys and download STL/SCAD files
-- **ADC Calibration** — calibrate hall-effect axes and set trigger thresholds
-- Click **Read from XPAD** to connect via WebUSB
-
-The web UI works identically with XPAD firmware and XPAD-NEO firmware.
-
----
-
-## Adding a New Feature
-
-### Example: add encoder support
-
-1. Uncomment `#define FEATURE_ENCODER` in `config.h`
-2. Create `encoder.h` and `encoder.cpp` with `encoder_setup()` and `encoder_task()`
-3. To add a new USB command, add one entry to `kHandlers[]` in `webusb_handler.cpp`
-
-That's it. The main sketch (`xpad_neo.ino`) already has the `#ifdef FEATURE_ENCODER`
-hooks in place.
-
----
-
-## File Overview
-
-```
-xpad_neo/
-├── xpad_neo.ino          Entry point: setup() and loop()
-├── config.h              Pin assignments, feature flags, USB IDs
-├── xpad_config.h         Shared config struct (binary-compatible with XPAD)
-├── flash_storage.h/.cpp  LittleFS read/write
-├── adc_keys.h/.cpp       ADC hall-effect scanning + EMA + trigger logic
-├── mx_keys.h/.cpp        MX switch scanning + debounce
-├── hid_keyboard.h/.cpp   USB HID keyboard reports
-└── webusb_handler.h/.cpp USB config protocol dispatch table
+```text
+Board: Waveshare RP2040 Zero
+USB Stack: Adafruit TinyUSB
 ```
 
----
+No LittleFS partition is required by the current single-file firmware.
 
-## Learning Resources
+## Command-Line Compile
 
-The code is annotated with explanations of key concepts. Suggested reading order:
+Arduino IDE includes `arduino-cli`. On this machine it was found at:
 
-1. `config.h` — understand what can be configured
-2. `xpad_config.h` — understand the data model
-3. `mx_keys.cpp` — simple digital I/O + debounce
-4. `adc_keys.cpp` — analog reading + EMA filter + trigger logic
-5. `hid_keyboard.cpp` — USB HID reports
-6. `webusb_handler.cpp` — protocol dispatch pattern
-7. `xpad_neo.ino` — how everything connects in the main loop
+```text
+C:\Users\steven\AppData\Local\Programs\arduino-ide\resources\app\lib\backend\resources\arduino-cli.exe
+```
 
-Paste any file into your preferred AI assistant and ask it to explain sections
-you don't understand, or ask it to help you add new features.
+Compile for Raspberry Pi Pico:
 
----
+```powershell
+& 'C:\Users\steven\AppData\Local\Programs\arduino-ide\resources\app\lib\backend\resources\arduino-cli.exe' compile --fqbn rp2040:rp2040:rpipico:usbstack=tinyusb --warnings all 'D:\tempFiles\vibecoding\XPAD-NEO-master\xpad_neo'
+```
+
+Recent compile result:
+
+```text
+Sketch uses 78536 bytes (3%) of program storage space.
+Global variables use 16972 bytes (6%) of dynamic memory.
+```
+
+## Hardware Test
+
+1. Flash the sketch from Arduino IDE.
+2. Open Notepad.
+3. Press each MX key once.
+4. Expected output is `1`, `2`, `3`, `4`, `5`, `6`, `7`, `8`.
+
+If no key types anything, the most likely issue is that the real XPAD MX GPIO
+pins are not GP0-GP7. In that case, use a temporary GPIO diagnostic sketch and
+then update the `MX_KEYS` table.
+
+## Deferred Work
+
+Layout Generator compatibility is deferred until the leader provides the main
+XPAD source or protocol details. It should be added later as a deliberate task,
+not guessed into the current beginner firmware.
+
+## Development Rules
+
+- Keep the active firmware MX-only.
+- Keep the firmware one `.ino` file unless there is a clear reason to split it.
+- Prioritize compiling, flashing, and hardware testing.
+- Do not add WebUSB, LittleFS, ADC, magnetic axis, encoder, microphone,
+  vibration, or macro support without a new explicit requirement.
+- Do not change UI or visual assets in this firmware task.
 
 ## License
 
-MIT — free to use, modify, and distribute.
-
----
-
-## Acknowledgements
-
-Special thanks to the **TinyUSB** project and the **GP2040-CE** team for their
-outstanding work and the inspiration they provided for this project.
-
-- [TinyUSB](https://github.com/hathach/tinyusb) — the lightweight USB stack that makes embedded HID and vendor-class devices accessible to everyone.
-- [GP2040-CE](https://github.com/OpenStickCommunity/GP2040-CE) — an open-source gamepad firmware for RP2040 that demonstrated how powerful this platform can be, and directly inspired the hall-effect calibration model used in XPAD-NEO.
-
-
+MIT - free to use, modify, and distribute.

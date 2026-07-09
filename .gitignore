@@ -1,0 +1,19 @@
+# Arduino / build output
+xpad_neo/build/
+*.elf
+*.uf2
+*.bin
+*.hex
+*.map
+*.d
+*.o
+
+# Local agent/workspace metadata
+.agents/
+.codex/
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+*.swp
+*.tmp
