@@ -39,11 +39,24 @@ Root documentation:
 ```text
 README.md
 AI_PROJECT_BRIEF.md
-V2_PLAN.md
 ```
 
 Generated Arduino build output under `xpad_neo/build/` is not source and should
 not be committed.
+
+## Priorities
+
+Work in this order:
+
+1. Compile successfully.
+2. Flash successfully.
+3. Support hardware key testing.
+4. Keep the active firmware to one `.ino` file.
+5. Keep code clear and beginner-readable.
+6. Reduce line count only after the firmware works.
+
+Do not optimize for modularity, extensibility, or protocol compatibility during
+the current V2 work.
 
 ## Supported Behavior
 
@@ -98,6 +111,31 @@ XPAD source or enough protocol detail to implement it deliberately.
 6. If a hardware test fails, first suspect GPIO mapping.
 7. Use a temporary diagnostic sketch only when needed; do not merge diagnostic
    complexity into the main firmware.
+
+## Hardware Test Flow
+
+The normal hardware test is:
+
+1. Flash `xpad_neo/xpad_neo.ino` from Arduino IDE.
+2. Open Notepad or another plain text editor.
+3. Press every MX key once.
+4. Confirm whether the expected `1` to `8` output appears.
+
+If no key types anything, do not add more features to the main firmware. Create
+a temporary GPIO diagnostic sketch, find the real XPAD MX pins, then update the
+`MX_KEYS` table in `xpad_neo.ino`.
+
+## Current Acceptance Criteria
+
+The V2 firmware is acceptable when:
+
+- active firmware is one `.ino` file
+- it compiles for Raspberry Pi Pico / RP2040 with Adafruit TinyUSB
+- it scans only MX GPIO switches
+- it sends USB HID keyboard reports
+- it has no custom module `.h/.cpp` files
+- WebUSB/Layout Generator work is deferred, not half-kept
+- non-MX modules are absent
 
 ## Suggested AI Prompt
 
