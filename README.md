@@ -1,166 +1,214 @@
 # XPAD-NEO
 
-Open-source Arduino firmware for the XTIA XPAD keyboard platform.
+XPAD-NEO is a small Arduino firmware project for an RP2040-based MX mechanical
+keyboard with up to eight switches.
 
-Designed as a learning resource for embedded vibe-coding with AI assistance.
-All source files are annotated with explanations of the underlying concepts.
+The firmware scans active-low MX switches, sends standard USB HID keyboard
+reports, and provides the minimal WebUSB protocol required by the Layout
+Generator at `https://xtiaconfiger.com`.
 
----
+XPAD-NEO is intentionally not a full XPAD firmware clone. Magnetic switches,
+encoders, microphones, vibration, macro playback, and non-Layout-Generator
+tools are outside the project scope.
 
-## Features
+## Current Status
 
 | Feature | Status |
 |---|---|
-| MX mechanical switch scanning | ✅ Implemented |
-| ADC hall-effect key scanning | ✅ Implemented |
-| EMA noise filtering | ✅ Implemented |
-| Fixed-threshold trigger | ✅ Implemented |
-| Rapid Trigger mode | ✅ Implemented |
-| USB HID keyboard (6KRO) | ✅ Implemented |
-| WebUSB config protocol | ✅ Implemented |
-| XTIA web UI compatible | ✅ Compatible |
-| LittleFS config persistence | ✅ Implemented |
-| Rotary encoder | 🔲 FEATURE_ENCODER |
-| Text macros | 🔲 FEATURE_MACRO |
-| I2S microphone | 🔲 FEATURE_MIC |
-| Vibration motor | 🔲 FEATURE_RUMBLE |
+| Eight MX mechanical switches | Supported |
+| Software debounce | Supported |
+| USB HID keyboard output | Supported |
+| Default output | `F13` through `F20` |
+| Layout Generator connection | Supported |
+| Layout/keymap read and write | Supported |
+| MX input test mode | Supported |
+| Flash preset persistence | Supported |
+| Invalid preset fallback | Supported |
+| LittleFS | Not used |
+| Magnetic/ADC switches | Not supported |
+| Encoder, microphone, vibration | Not supported |
+| Macro playback | Not supported |
+| Full XPAD protocol | Not supported |
 
----
+The firmware has passed compile, flash, Layout Generator, HID, and unplug/replug
+persistence tests on Raspberry Pi Pico hardware.
 
-## Hardware
+## Project Structure
 
-- **MCU**: Waveshare RP2040 Zero (same as used in XPAD and GP2040-CE)
-- **ADC keys**: GP26, GP27, GP28, GP29 (hall-effect, 12-bit ADC)
-- **MX keys**: GP0–GP5 by default (configurable in `config.h`)
+```text
+xpad_neo/
+  xpad_neo.ino             Beginner-facing MX scan and HID flow
+  layout_generator.ino     WebUSB protocol and Flash preset storage
+```
 
----
+Arduino IDE displays these as two tabs in one sketch. Arduino combines both
+`.ino` files into one firmware image; there is no custom library or framework.
+
+Start with `xpad_neo.ino` when learning the project. Its main path is:
+
+```text
+MX switch -> GPIO -> debounce -> HID report -> computer
+```
+
+`layout_generator.ino` is the advanced compatibility layer and can be read
+later.
+
+Generated output under `xpad_neo/build/` is ignored and should not be committed.
+
+## Hardware Model
+
+XPAD-NEO currently supports up to eight MX switch positions. The default
+fallback preset uses GP0-GP7, but future board variants or teaching experiments
+may use fewer switches or different GPIO pins. Each switch is active-low:
+
+```text
+released: GPIO reads HIGH through INPUT_PULLUP
+pressed:  switch connects GPIO to GND, so GPIO reads LOW
+```
+
+The built-in fallback mapping is kept near the top of `xpad_neo.ino`:
+
+```cpp
+static const MxKey DEFAULT_MX_KEYS[] = {
+    { 0, 0x68, 0 }, // F13
+    { 1, 0x69, 0 }, // F14
+    { 2, 0x6A, 0 }, // F15
+    { 3, 0x6B, 0 }, // F16
+    { 4, 0x6C, 0 }, // F17
+    { 5, 0x6D, 0 }, // F18
+    { 6, 0x6E, 0 }, // F19
+    { 7, 0x6F, 0 }, // F20
+};
+```
+
+`F13-F20` avoid normal typing conflicts and work well with Small Deck and other
+shortcut applications. Notepad normally shows no visible text for these keys;
+use a keyboard event viewer or enable **Show all F13-F24** in Small Deck.
+
+If the real board uses different GPIO pins or fewer than eight switches, update
+the table after confirming the wiring.
+
+## Preset Selection and Flash
+
+Startup uses this order:
+
+1. Load the saved XPAD-NEO preset from RP2040 Flash.
+2. Validate its magic, version, size, checksum, GPIO values, and eight-key limit.
+3. Use the saved preset when validation succeeds.
+4. Otherwise use `DEFAULT_MX_KEYS`.
+
+Layout Generator writes update the active HID mapping and are committed through
+the arduino-pico `EEPROM` Flash emulation library. LittleFS is not required.
+
+The storage record is intentionally local to XPAD-NEO. Corrupt or incompatible
+records are rejected instead of being partially applied.
+
+## Layout Generator Compatibility
+
+The USB interface layout is:
+
+```text
+Interface 0: HID Keyboard
+Interface 1: WebUSB Vendor
+Vendor OUT:  endpoint 2
+Vendor IN:   endpoint 2
+```
+
+The firmware handles only the commands needed by the current Layout Generator:
+
+```text
+0x30  write keymap
+0x31  write layout matrix
+0x32  read layout matrix
+0x33  read keymap
+0x34  read MX input state
+0x35  acknowledge macro write without macro support
+0x36  return an empty macro slot
+0x37  acknowledge encoder write without encoder support
+0x38  return an empty encoder configuration
+0x39  acknowledge vibration test without vibration support
+```
+
+Incoming layouts are rejected when they exceed eight keys, contain duplicate or
+invalid RP2040 GPIO values, or have invalid packet dimensions. Any GPIO from
+GP0 through GP29 is accepted on purpose so the sketch remains easy to rewire and
+adapt for small teaching builds.
+
+Layout Generator stores visual layout and HID keymap through separate protocol
+commands. In normal read/edit/write use, the web page keeps them in sync. The
+firmware stores each command as it arrives and treats the keymap as the runtime
+source of truth; cross-validation is intentionally omitted to keep compatibility
+and code flow simple.
+
+WebUSB response writes have a stall timeout so a disconnected browser cannot
+stop HID key scanning.
 
 ## Arduino IDE Setup
 
-### 1. Install the arduino-pico board package
+1. Install Arduino IDE 2.x.
+2. Open **File > Preferences**.
+3. Add this Boards Manager URL:
 
-In Arduino IDE → File → Preferences → Additional Boards Manager URLs, add:
-
-```
+```text
 https://github.com/earlephilhower/arduino-pico/releases/download/global/package_rp2040_index.json
 ```
 
-Then go to Tools → Board → Boards Manager, search for **rp2040** and install
-**Raspberry Pi RP2040 Boards** by Earle F. Philhower III.
+4. Install **Raspberry Pi Pico/RP2040/RP2350 by Earle F. Philhower, III**.
+5. Open `xpad_neo/xpad_neo.ino`.
+6. Select:
 
-### 2. Select your board
-
-Tools → Board → Raspberry Pi RP2040 Boards → **Waveshare RP2040 Zero**
-
-### 3. Select USB Stack
-
-Tools → USB Stack → **Adafruit TinyUSB**
-
-This is required. The default "Pico SDK" USB stack does not support the
-composite HID + Vendor device used here.
-
-### 4. Set USB VID/PID
-
-The XTIA web UI filters USB devices by Vendor ID `0x1209` (the pid.codes
-open-hardware VID, same as the XPAD firmware). You need to set this before
-uploading.
-
-**Option A — build flags (PlatformIO / command line):**
-```
--DUSB_VID=0x1209 -DUSB_PID=0x0002
+```text
+Board: Raspberry Pi Pico
+USB Stack: Adafruit TinyUSB
 ```
 
-**Option B — edit `boards.txt`:**
-Find your arduino-pico installation (usually in
-`~/AppData/Local/Arduino15/packages/rp2040/hardware/rp2040/x.x.x/`),
-open `boards.txt`, find the `waveshare_rp2040_zero` section, and change:
-```
-waveshare_rp2040_zero.build.vid=0x2E8A
-waveshare_rp2040_zero.build.pid=0x000a
-```
-to:
-```
-waveshare_rp2040_zero.build.vid=0x1209
-waveshare_rp2040_zero.build.pid=0x0002
-```
+The current firmware was verified with arduino-pico `5.6.1`.
 
-### 5. Upload
+For Waveshare RP2040 Zero hardware, select that board instead while keeping the
+Adafruit TinyUSB stack.
 
-Hold the BOOT button on the RP2040, connect USB, release BOOT. The board
-appears as a USB drive. Click Upload in Arduino IDE.
+## Compile
 
----
+Compile from Arduino IDE with **Sketch > Verify/Compile**, or use an
+`arduino-cli` available on your `PATH`:
 
-## Using the XTIA Web UI
-
-Open `http://118.31.120.202` (or your local server) in Chrome or Edge.
-
-- **Layout Generator** — assign keys and download STL/SCAD files
-- **ADC Calibration** — calibrate hall-effect axes and set trigger thresholds
-- Click **Read from XPAD** to connect via WebUSB
-
-The web UI works identically with XPAD firmware and XPAD-NEO firmware.
-
----
-
-## Adding a New Feature
-
-### Example: add encoder support
-
-1. Uncomment `#define FEATURE_ENCODER` in `config.h`
-2. Create `encoder.h` and `encoder.cpp` with `encoder_setup()` and `encoder_task()`
-3. To add a new USB command, add one entry to `kHandlers[]` in `webusb_handler.cpp`
-
-That's it. The main sketch (`xpad_neo.ino`) already has the `#ifdef FEATURE_ENCODER`
-hooks in place.
-
----
-
-## File Overview
-
-```
-xpad_neo/
-├── xpad_neo.ino          Entry point: setup() and loop()
-├── config.h              Pin assignments, feature flags, USB IDs
-├── xpad_config.h         Shared config struct (binary-compatible with XPAD)
-├── flash_storage.h/.cpp  LittleFS read/write
-├── adc_keys.h/.cpp       ADC hall-effect scanning + EMA + trigger logic
-├── mx_keys.h/.cpp        MX switch scanning + debounce
-├── hid_keyboard.h/.cpp   USB HID keyboard reports
-└── webusb_handler.h/.cpp USB config protocol dispatch table
+```powershell
+arduino-cli compile --fqbn rp2040:rp2040:rpipico:usbstack=tinyusb --warnings all xpad_neo
 ```
 
----
+Latest verified Raspberry Pi Pico result:
 
-## Learning Resources
+```text
+Sketch uses 81276 bytes (3%) of program storage space.
+Global variables use 17676 bytes (6%) of dynamic memory.
+```
 
-The code is annotated with explanations of key concepts. Suggested reading order:
+## Flash and Test
 
-1. `config.h` — understand what can be configured
-2. `xpad_config.h` — understand the data model
-3. `mx_keys.cpp` — simple digital I/O + debounce
-4. `adc_keys.cpp` — analog reading + EMA filter + trigger logic
-5. `hid_keyboard.cpp` — USB HID reports
-6. `webusb_handler.cpp` — protocol dispatch pattern
-7. `xpad_neo.ino` — how everything connects in the main loop
+1. Compile and upload the sketch.
+2. If automatic upload cannot find the board, hold **BOOTSEL** while connecting
+   the Pico and upload to the `RPI-RP2` drive.
+3. Confirm the device appears as `XPAD-NEO` and as a USB keyboard.
+4. Test all eight MX switches with a keyboard event viewer or Small Deck.
+5. Connect to `https://xtiaconfiger.com` using Chrome or Edge.
+6. Read the current layout and test MX input state.
+7. Write a clearly different preset and confirm HID output changes.
+8. Unplug and reconnect the keyboard.
+9. Read the preset again and confirm the saved layout and HID output remain.
 
-Paste any file into your preferred AI assistant and ask it to explain sections
-you don't understand, or ask it to help you add new features.
+`No drive to deploy` is an upload failure, not a compile failure. Enter BOOTSEL
+mode and retry the upload when this appears.
 
----
+## Development Rules
+
+- Keep XPAD-NEO limited to at most eight MX switch positions.
+- Keep the active firmware to these two Arduino tabs unless requirements change.
+- Keep `xpad_neo.ino` readable as the beginner path.
+- Keep WebUSB limited to Layout Generator compatibility.
+- Keep Flash storage small, validated, and versioned.
+- Do not add LittleFS or restore removed XPAD modules without a new requirement.
+- Prioritize compile, hardware behavior, and clarity over abstraction.
 
 ## License
 
-MIT — free to use, modify, and distribute.
-
----
-
-## Acknowledgements
-
-Special thanks to the **TinyUSB** project and the **GP2040-CE** team for their
-outstanding work and the inspiration they provided for this project.
-
-- [TinyUSB](https://github.com/hathach/tinyusb) — the lightweight USB stack that makes embedded HID and vendor-class devices accessible to everyone.
-- [GP2040-CE](https://github.com/OpenStickCommunity/GP2040-CE) — an open-source gamepad firmware for RP2040 that demonstrated how powerful this platform can be, and directly inspired the hall-effect calibration model used in XPAD-NEO.
-
-
+MIT - free to use, modify, and distribute.
