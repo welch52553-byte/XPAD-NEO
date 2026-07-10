@@ -2,9 +2,10 @@
 
 XPAD-NEO is a single-file Arduino sketch for an MX-only XPAD mini keyboard.
 
-It is intentionally small: one `.ino` file scans mechanical MX switches and
-sends normal USB HID keyboard reports. The project is aimed at beginner-friendly
-hardware testing and teaching, not full XPAD firmware compatibility.
+It is intentionally small: one `.ino` file scans mechanical MX switches, sends
+normal USB HID keyboard reports, and exposes a minimal WebUSB/Layout Generator
+compatibility layer. The project is aimed at beginner-friendly hardware testing
+and teaching, not full XPAD firmware compatibility.
 
 The firmware is designed to work without the original XPAD host tools. When no
 valid Flash layout is available, it uses the hardcoded default GPIO-to-HID
@@ -17,9 +18,12 @@ can override those defaults once the layout format is known.
 |---|---|
 | MX mechanical switch scanning | Supported |
 | USB HID keyboard output | Supported |
+| Minimal WebUSB vendor interface | Supported |
 | Single-file Arduino sketch | Supported |
 | Default HID output | `F13` to `F20` |
-| WebUSB / Layout Generator | Deferred |
+| Layout Generator connection/read/write | Minimal in-memory compatibility |
+| Flash preset persistence | Placeholder only |
+| Full XPAD protocol emulation | Not supported |
 | LittleFS config storage | Removed |
 | ADC / magnetic axis keys | Not supported |
 | Encoder | Not supported |
@@ -70,6 +74,38 @@ Future layout loading should follow this priority:
 The current firmware does not parse a real Flash layout yet because the stored
 layout format and protocol are not defined in this repository.
 
+## Minimal Layout Generator Compatibility
+
+The firmware exposes a small WebUSB vendor interface so
+`https://xtiaconfiger.com` can claim the expected interface and exchange the
+basic packets needed by Layout Generator.
+
+The intended USB interface order is:
+
+```text
+Interface 0: HID Keyboard
+Interface 1: WebUSB Vendor
+```
+
+The current compatibility layer is deliberately narrow. It supports the active
+Layout Generator path enough to:
+
+- read the current layout matrix
+- read the current keymap
+- write a temporary keymap
+- write a temporary layout matrix
+- read current MX input state for test mode
+- acknowledge unsupported macro, encoder, and vibration commands without adding
+  those features
+
+Written presets update the active in-memory preset and HID output immediately.
+They are not saved to Flash yet. After a reboot, the firmware falls back to the
+hardcoded default mapping unless future Flash preset support is implemented.
+
+This is not full XPAD protocol emulation. Do not reintroduce magnetic keys,
+encoders, microphones, vibration, macro playback, LittleFS, or non-Layout-
+Generator host tools into this project without a new explicit requirement.
+
 ## Arduino IDE Setup
 
 1. Install Arduino IDE 2.x.
@@ -119,8 +155,8 @@ Compile for Raspberry Pi Pico:
 Recent compile result:
 
 ```text
-Sketch uses 78536 bytes (3%) of program storage space.
-Global variables use 16972 bytes (6%) of dynamic memory.
+Sketch uses 80240 bytes (3%) of program storage space.
+Global variables use 17316 bytes (6%) of dynamic memory.
 ```
 
 ## Hardware Test
@@ -140,18 +176,18 @@ then update the `DEFAULT_MX_KEYS` table.
 
 ## Deferred Work
 
-Layout Generator or Flash layout compatibility is deferred until the leader
-provides the main XPAD source, protocol details, or stored layout format. It
-should be added later as a deliberate task, not guessed into the current
-beginner firmware.
+Flash layout persistence is deferred until the leader provides the main XPAD
+source, protocol details, or stored layout format. It should be added later as a
+deliberate task, not guessed into the current beginner firmware.
 
 ## Development Rules
 
 - Keep the active firmware MX-only.
 - Keep the firmware one `.ino` file unless there is a clear reason to split it.
 - Prioritize compiling, flashing, and hardware testing.
-- Do not add WebUSB, LittleFS, ADC, magnetic axis, encoder, microphone,
-  vibration, or macro support without a new explicit requirement.
+- Keep WebUSB limited to Layout Generator compatibility.
+- Do not add LittleFS, ADC, magnetic axis, encoder, microphone, vibration, or
+  macro support without a new explicit requirement.
 - Do not change UI or visual assets in this firmware task.
 
 ## License
