@@ -1,7 +1,7 @@
 # XPAD-NEO
 
-XPAD-NEO is a small Arduino firmware project for an eight-key MX mechanical
-keyboard based on RP2040.
+XPAD-NEO is a small Arduino firmware project for an RP2040-based MX mechanical
+keyboard with up to eight switches.
 
 The firmware scans active-low MX switches, sends standard USB HID keyboard
 reports, and provides the minimal WebUSB protocol required by the Layout
@@ -57,7 +57,9 @@ Generated output under `xpad_neo/build/` is ignored and should not be committed.
 
 ## Hardware Model
 
-XPAD-NEO always has eight MX switch positions. Each switch is active-low:
+XPAD-NEO currently supports up to eight MX switch positions. The default
+fallback preset uses GP0-GP7, but future board variants or teaching experiments
+may use fewer switches or different GPIO pins. Each switch is active-low:
 
 ```text
 released: GPIO reads HIGH through INPUT_PULLUP
@@ -83,8 +85,8 @@ static const MxKey DEFAULT_MX_KEYS[] = {
 shortcut applications. Notepad normally shows no visible text for these keys;
 use a keyboard event viewer or enable **Show all F13-F24** in Small Deck.
 
-If the real board uses different GPIO pins, update only the first field in each
-entry after confirming the wiring.
+If the real board uses different GPIO pins or fewer than eight switches, update
+the table after confirming the wiring.
 
 ## Preset Selection and Flash
 
@@ -128,8 +130,18 @@ The firmware handles only the commands needed by the current Layout Generator:
 ```
 
 Incoming layouts are rejected when they exceed eight keys, contain duplicate or
-invalid GPIO values, or have invalid packet dimensions. WebUSB response writes
-have a stall timeout so a disconnected browser cannot stop HID key scanning.
+invalid RP2040 GPIO values, or have invalid packet dimensions. Any GPIO from
+GP0 through GP29 is accepted on purpose so the sketch remains easy to rewire and
+adapt for small teaching builds.
+
+Layout Generator stores visual layout and HID keymap through separate protocol
+commands. In normal read/edit/write use, the web page keeps them in sync. The
+firmware stores each command as it arrives and treats the keymap as the runtime
+source of truth; cross-validation is intentionally omitted to keep compatibility
+and code flow simple.
+
+WebUSB response writes have a stall timeout so a disconnected browser cannot
+stop HID key scanning.
 
 ## Arduino IDE Setup
 
@@ -189,7 +201,7 @@ mode and retry the upload when this appears.
 
 ## Development Rules
 
-- Keep XPAD-NEO fixed at eight MX switch positions.
+- Keep XPAD-NEO limited to at most eight MX switch positions.
 - Keep the active firmware to these two Arduino tabs unless requirements change.
 - Keep `xpad_neo.ino` readable as the beginner path.
 - Keep WebUSB limited to Layout Generator compatibility.

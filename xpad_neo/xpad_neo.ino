@@ -40,8 +40,10 @@ struct MxKey {
 //   1. If a valid XPAD-NEO Flash preset exists, use it.
 //   2. Otherwise use this hardcoded fallback preset.
 //
-// XPAD-NEO always has eight MX switch positions. F13-F20 work well as
-// conflict-free defaults for Small Deck and other shortcut applications.
+// XPAD-NEO currently supports up to eight MX switch positions. This fallback
+// preset uses GP0-GP7, but future board variants or teaching experiments may
+// use fewer switches or different GPIO pins. F13-F20 work well as conflict-free
+// defaults for Small Deck and other shortcut applications.
 static const MxKey DEFAULT_MX_KEYS[] = {
     { 0, 0x68, 0 }, // F13
     { 1, 0x69, 0 }, // F14
@@ -58,7 +60,7 @@ static const uint8_t DEFAULT_MX_KEY_COUNT =
 static const uint8_t MX_KEY_CAPACITY = 8;
 
 static_assert(DEFAULT_MX_KEY_COUNT == MX_KEY_CAPACITY,
-              "The default preset must define all eight MX keys.");
+              "The default preset must fill the eight-key fallback capacity.");
 
 // Layout Generator uses a fixed 8x10 visual matrix. These fields remain in the
 // shared Preset because both Arduino tabs use the same active configuration.

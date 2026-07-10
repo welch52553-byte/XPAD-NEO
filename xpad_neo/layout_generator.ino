@@ -430,6 +430,18 @@ static bool storeLayoutPacket(const uint8_t* buffer, uint8_t count) {
     return true;
 }
 
+// Layout matrix is the visual arrangement used by Layout Generator.
+// Keymap is the HID scan/output source of truth.
+//
+// Layout Generator normally keeps these two views in sync and writes them as
+// part of the same user operation, even though the protocol sends them as
+// separate commands. XPAD-NEO stores each command as it arrives so a normal
+// read/edit/write flow remains simple and compatible.
+//
+// Cross-validation is intentionally not enforced here. A mismatch would only
+// happen after partial writes, interrupted USB sessions, or custom tools that
+// update layout/keymap independently. In that case, keymap remains the runtime
+// source of truth.
 static bool storeKeymapPacket(const uint8_t* buffer, uint8_t count) {
     if (count < 2) {
         return false;
@@ -463,6 +475,10 @@ static bool storeKeymapPacket(const uint8_t* buffer, uint8_t count) {
 }
 
 static bool isValidMxGpio(uint8_t gpio) {
+    // This firmware intentionally accepts any RP2040 GPIO number. XPAD-NEO is
+    // an entry-level "up to eight MX keys" project, so users can rewire keys,
+    // try smaller builds, or adapt the sketch to future board variants without
+    // changing the validation code first.
     return gpio < RP2040_GPIO_COUNT;
 }
 

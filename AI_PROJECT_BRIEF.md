@@ -4,7 +4,7 @@ Read this file before changing XPAD-NEO.
 
 ## Product Direction
 
-XPAD-NEO is a beginner-friendly Arduino firmware project for exactly eight MX
+XPAD-NEO is a beginner-friendly Arduino firmware project for up to eight MX
 mechanical switches on RP2040.
 
 It is not a simplified copy that must preserve the full XPAD architecture. It is
@@ -38,7 +38,7 @@ This is the beginner-facing main path. It owns:
 
 - USB identity and HID setup
 - `MxKey` and `Preset` shared structures
-- fixed eight-key default mapping
+- eight-key fallback mapping
 - `setup()` and `loop()`
 - active preset application
 - GPIO scanning and debounce
@@ -66,8 +66,9 @@ framework.
 
 ## Hardware and Default Mapping
 
-XPAD-NEO always has eight MX switch positions. Presets may disable positions but
-must never define more than eight keys.
+XPAD-NEO currently supports up to eight MX switch positions. Presets may use
+fewer positions but must never define more than eight keys. Future board
+variants or teaching experiments may use different GPIO pins.
 
 Current fallback mapping:
 
@@ -101,6 +102,13 @@ Startup follows one path:
 
 Layout and keymap arrive in separate protocol commands. Each candidate preset is
 fully validated and committed to Flash before it replaces `activePreset`.
+
+Layout matrix is the visual arrangement used by Layout Generator. Keymap is the
+HID scan/output source of truth. The official Layout Generator normally keeps
+these views in sync during a read/edit/write operation, even though it sends
+them as separate commands. XPAD-NEO intentionally does not cross-validate the
+two views because mismatches are expected only after partial writes, interrupted
+USB sessions, or custom tools that update one side independently.
 
 The current storage format is XPAD-NEO-specific and versioned. It does not need
 to reproduce an unknown legacy XPAD LittleFS format.
@@ -138,6 +146,8 @@ Protocol safety rules:
 
 - reject more than eight key mappings
 - reject invalid or duplicate GPIO values
+- accept any RP2040 GPIO number intentionally, so students can rewire keys or
+  adapt future board variants without changing validation code first
 - reject invalid layout dimensions and packet lengths
 - do not partially apply invalid candidates
 - return a nonzero status for rejected writes
@@ -188,7 +198,7 @@ Hardware verification has passed for:
 
 The current firmware is acceptable when:
 
-- only eight MX switch positions are supported
+- no more than eight MX switch positions are supported
 - the main learning path remains readable in `xpad_neo.ino`
 - Layout Generator and persistence stay in `layout_generator.ino`
 - both tabs compile as one Arduino sketch
@@ -200,7 +210,7 @@ The current firmware is acceptable when:
 ## Suggested AI Prompt
 
 ```text
-Read AI_PROJECT_BRIEF.md first. XPAD-NEO is a two-tab Arduino sketch for exactly
+Read AI_PROJECT_BRIEF.md first. XPAD-NEO is a two-tab Arduino sketch for up to
 eight MX switches. Keep the beginner MX scan/HID flow in xpad_neo.ino and the
 minimal Layout Generator plus validated Flash persistence in
 layout_generator.ino. Do not add LittleFS, magnetic/ADC keys, Rapid Trigger,
