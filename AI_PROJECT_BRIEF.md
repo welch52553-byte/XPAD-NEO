@@ -2,85 +2,74 @@
 
 Read this file before changing XPAD-NEO.
 
-## Current Direction
+## Product Direction
 
-XPAD-NEO V2 is a single-file Arduino MX keyboard sketch with a minimal
-WebUSB/Layout Generator compatibility layer.
+XPAD-NEO is a beginner-friendly Arduino firmware project for exactly eight MX
+mechanical switches on RP2040.
 
-It is not a full XPAD firmware clone, not a modular firmware framework, and not
-a full XPAD firmware framework. The active goal is to keep one simple Arduino
-sketch that compiles, flashes, scans MX switches, sends USB HID keyboard
-reports, and supports only the Layout Generator commands currently needed for
-basic read/write/test compatibility.
+It is not a simplified copy that must preserve the full XPAD architecture. It is
+a small independent firmware with only:
 
-The firmware should be able to run without the original XPAD host tools. Its
-default behavior is a hardcoded GPIO-to-HID layout in `xpad_neo.ino`. Later, if
-a valid Flash layout is written by a supported tool, that Flash layout should
-override the hardcoded defaults. If no valid Flash layout exists, the firmware
-must fall back to the hardcoded defaults.
+- active-low MX GPIO scanning
+- software debounce
+- USB HID keyboard output
+- minimal Layout Generator WebUSB compatibility
+- validated Flash preset persistence
 
-## Product Goal
+Magnetic switches, ADC/Rapid Trigger, encoders, microphones, vibration, macro
+playback, LittleFS, non-Layout-Generator tools, and full XPAD protocol emulation
+are outside the project scope.
 
-Make XPAD-NEO suitable as a beginner embedded mini project:
-
-- easy to open in Arduino IDE
-- easy to read in one sitting
-- easy to modify by changing constants near the top of the sketch
-- easy to test with appropriate keyboard or application tools
-- focused on real hardware behavior
-
-Code size is allowed to be practical. Around 500 lines of code is acceptable if
-it helps clarity and testing; comments can be more generous because this project
-is meant to be readable by beginners and AI assistants.
-
-## Active Source Shape
+## Source Architecture
 
 ```text
 xpad_neo/
   xpad_neo.ino
+  layout_generator.ino
 ```
 
-The active firmware should remain one `.ino` file unless the user explicitly
-changes direction.
+Both files are Arduino tabs in one sketch and compile as one translation unit.
+Do not add `.h/.cpp` modules, classes, or a framework unless a future requirement
+creates a concrete need.
 
-Root documentation:
+### xpad_neo.ino
+
+This is the beginner-facing main path. It owns:
+
+- USB identity and HID setup
+- `MxKey` and `Preset` shared structures
+- fixed eight-key default mapping
+- `setup()` and `loop()`
+- active preset application
+- GPIO scanning and debounce
+- keyboard report generation
+
+A student should be able to understand this flow without reading the second tab:
 
 ```text
-README.md
-AI_PROJECT_BRIEF.md
+MX switch -> GPIO -> debounce -> HID report -> computer
 ```
 
-Generated Arduino build output under `xpad_neo/build/` is not source and should
-not be committed.
+### layout_generator.ino
 
-## Priorities
+This is the advanced compatibility layer. It owns:
 
-Work in this order:
+- WebUSB interface setup
+- Layout Generator packet parsing and responses
+- layout/keymap validation
+- unsupported capability stubs required by the web page
+- EEPROM/Flash save and load
+- storage magic, version, size, and checksum validation
 
-1. Compile successfully.
-2. Flash successfully.
-3. Support hardware key testing.
-4. Keep the active firmware to one `.ino` file.
-5. Keep code clear and beginner-readable.
-6. Reduce line count only after the firmware works.
+Keep this file procedural and explicit. Do not turn it into a reusable protocol
+framework.
 
-Do not optimize for modularity, extensibility, or protocol compatibility during
-the current V2 work.
+## Hardware and Default Mapping
 
-## Supported Behavior
+XPAD-NEO always has eight MX switch positions. Presets may disable positions but
+must never define more than eight keys.
 
-The firmware supports only:
-
-- active-low MX switch GPIO scanning
-- software debounce
-- USB HID keyboard reports
-- minimal WebUSB vendor interface for Layout Generator compatibility
-- in-memory Layout Generator layout/keymap read and write
-- Layout Generator input-state reads for MX hardware testing
-- hardcoded default GPIO/keycode constants in `xpad_neo.ino`
-- a future Flash layout override point, once the layout format is known
-
-Current default fallback mapping:
+Current fallback mapping:
 
 ```text
 GP0 -> F13
@@ -93,29 +82,32 @@ GP6 -> F19
 GP7 -> F20
 ```
 
-The default mapping should be kept near the top of `xpad_neo.ino` and documented
-with clear English comments. This section is intentionally beginner-facing: a
-new reader should be able to see which GPIO pin maps to which HID output before
-reading the scan loop.
+The fallback table must stay near the top of `xpad_neo.ino`. Source comments are
+English and should explain active-low wiring and HID keycodes clearly.
 
-## Layout Selection Model
+## Preset Selection
 
-The intended layout priority is:
+Startup follows one path:
 
-1. Use a valid Flash layout if one exists.
-2. Otherwise use the hardcoded default layout in `xpad_neo.ino`.
+1. Initialize EEPROM Flash emulation.
+2. Read the stored XPAD-NEO record.
+3. Validate magic, version, structure size, checksum, layout, key count, and GPIO
+   values.
+4. Use the stored preset when valid.
+5. Otherwise copy the hardcoded default into `activePreset`.
+6. Configure GPIO and start scanning from `activePreset.keymap`.
 
-Do not implement real Flash layout parsing until the XPAD source, Layout
-Generator protocol, or stored layout format is available. Until then, keep only
-a small, obvious placeholder function if needed so the main scan/HID logic does
-not need to be rewritten later.
+`activePreset` is the runtime source used by both HID and Layout Generator.
 
-## Minimal Layout Generator Model
+Layout and keymap arrive in separate protocol commands. Each candidate preset is
+fully validated and committed to Flash before it replaces `activePreset`.
 
-The firmware exposes WebUSB only for the active Layout Generator workflow at
-`https://xtiaconfiger.com`.
+The current storage format is XPAD-NEO-specific and versioned. It does not need
+to reproduce an unknown legacy XPAD LittleFS format.
 
-Intended USB shape:
+## WebUSB Boundary
+
+Required USB shape:
 
 ```text
 Interface 0: HID Keyboard
@@ -123,21 +115,6 @@ Interface 1: WebUSB Vendor
 Vendor OUT:  endpoint 2
 Vendor IN:   endpoint 2
 ```
-
-Implementation notes:
-
-- Register HID before WebUSB so TinyUSB allocates interface 0 to HID and
-  interface 1 to WebUSB.
-- Enable the HID OUT endpoint so HID consumes endpoint 1 in both directions and
-  WebUSB is more likely to receive endpoint 2 in both directions.
-- Keep one `Preset` as the shared source of truth for Layout Generator and HID
-  scanning.
-- Support temporary in-memory layout/keymap writes so application-side presets
-  can immediately change HID output.
-- Do not save Layout Generator writes to Flash until the stored layout format is
-  explicitly defined.
-- Keep this compatibility layer narrow; it is not permission to restore the full
-  XPAD runtime.
 
 Currently handled commands:
 
@@ -154,80 +131,79 @@ Currently handled commands:
 0x39 acknowledge vibration test only
 ```
 
-## Not Supported
+Commands `0x35-0x39` are compatibility responses, not implementations of macro,
+encoder, or vibration features.
 
-Do not add these unless the user explicitly gives a new requirement:
+Protocol safety rules:
 
-- full WebUSB runtime beyond Layout Generator compatibility
-- non-required Layout Generator protocol areas
-- LittleFS config storage
-- dynamic keymap persistence, except for a future explicitly defined Flash
-  layout format
-- persistent layout matrix storage, except for a future explicitly defined Flash
-  format
-- ADC or magnetic axis keys
-- Rapid Trigger
-- encoder support
-- microphone support
-- vibration support
-- macro playback
-- non-Layout-Generator XPAD tools
-- UI or visual changes
+- reject more than eight key mappings
+- reject invalid or duplicate GPIO values
+- reject invalid layout dimensions and packet lengths
+- do not partially apply invalid candidates
+- return a nonzero status for rejected writes
+- never let a stalled WebUSB endpoint block HID forever
+- force an empty HID report after applying a new keymap so old keys cannot stick
 
-Flash persistence and broader protocol compatibility are deferred until the
-leader provides the main XPAD source or enough protocol detail to implement them
-deliberately.
+## Engineering Priorities
 
-## Engineering Rules
+Work in this order:
 
-1. Keep the firmware simple before making it clever.
-2. Prefer constants at the top of `xpad_neo.ino` over configuration systems.
-3. Prioritize compile success and hardware testing.
-4. Avoid custom `.h/.cpp` modules in the active firmware.
-5. Do not reintroduce deleted modules casually.
-6. If a hardware test fails, first suspect GPIO mapping.
-7. Use a temporary diagnostic sketch only when needed; do not merge diagnostic
-   complexity into the main firmware.
+1. Compile with Raspberry Pi Pico and Adafruit TinyUSB.
+2. Flash successfully.
+3. Verify all eight MX inputs and HID output.
+4. Verify Layout Generator connection/read/write/test.
+5. Verify unplug/replug Flash persistence.
+6. Preserve the two-tab beginner/advanced boundary.
+7. Reduce code only when readability and behavior remain clear.
 
-## Hardware Test Flow
+Avoid abstractions whose only benefit is fewer lines. Straightforward loops,
+small structs, named command constants, and explicit validation are preferred.
 
-The hardware test flow should stay open and match the current task:
+## Verified Environment
 
-1. Flash `xpad_neo/xpad_neo.ino` from Arduino IDE.
-2. Confirm the board enumerates as a USB keyboard.
-3. Choose a test target:
-   - keyboard event viewer or OS-level hotkey tool for raw HID checks
-   - Small Deck with **Show all F13-F24** enabled for launcher checks
-   - a temporary diagnostic sketch if GPIO mapping is unknown
-4. Press every MX key once.
-5. Confirm whether the expected HID output or app action occurs.
+```text
+Board: Raspberry Pi Pico
+Arduino core: rp2040 5.6.1
+USB Stack: Adafruit TinyUSB
+```
 
-If no key types anything, do not add more features to the main firmware. Create
-a temporary GPIO diagnostic sketch, find the real XPAD MX pins, then update the
-`DEFAULT_MX_KEYS` table in `xpad_neo.ino`.
+Latest verified compile:
 
-## Current Acceptance Criteria
+```text
+Sketch uses 81276 bytes (3%) of program storage space.
+Global variables use 17676 bytes (6%) of dynamic memory.
+```
 
-The V2 firmware is acceptable when:
+Hardware verification has passed for:
 
-- active firmware is one `.ino` file
-- it compiles for Raspberry Pi Pico / RP2040 with Adafruit TinyUSB
-- it scans only MX GPIO switches
-- it sends USB HID keyboard reports
-- it has no custom module `.h/.cpp` files
-- it exposes a minimal WebUSB vendor interface for Layout Generator
-- it can read/write the active in-memory Layout Generator preset
-- Flash preset persistence is deferred, not guessed
-- non-MX modules are absent
+- default HID output
+- Layout Generator pairing and connection
+- layout/keymap read and write
+- MX input test mode
+- active keymap behavior
+- saved preset recovery after USB unplug/replug
+- two-tab firmware after the structural split
+
+## Acceptance Criteria
+
+The current firmware is acceptable when:
+
+- only eight MX switch positions are supported
+- the main learning path remains readable in `xpad_neo.ino`
+- Layout Generator and persistence stay in `layout_generator.ino`
+- both tabs compile as one Arduino sketch
+- invalid Flash data falls back to the default preset
+- invalid WebUSB data cannot corrupt the active preset
+- WebUSB failure cannot permanently stop HID scanning
+- no removed XPAD hardware modules return
 
 ## Suggested AI Prompt
 
 ```text
-Read AI_PROJECT_BRIEF.md first. XPAD-NEO V2 is a single-file Arduino sketch
-that scans MX switches, sends USB HID keyboard reports, and exposes a minimal
-WebUSB/Layout Generator compatibility layer. Do not add LittleFS, broad XPAD
-runtime code, ADC/magnetic axis support, encoder support, microphone support,
-vibration, macro playback, or Flash persistence unless explicitly requested.
-Keep the active firmware in xpad_neo/xpad_neo.ino and prioritize
-compile/hardware testing.
+Read AI_PROJECT_BRIEF.md first. XPAD-NEO is a two-tab Arduino sketch for exactly
+eight MX switches. Keep the beginner MX scan/HID flow in xpad_neo.ino and the
+minimal Layout Generator plus validated Flash persistence in
+layout_generator.ino. Do not add LittleFS, magnetic/ADC keys, Rapid Trigger,
+encoders, microphones, vibration, macro playback, non-Layout-Generator tools,
+or a framework. Compile and preserve hardware-tested behavior.
 ```
